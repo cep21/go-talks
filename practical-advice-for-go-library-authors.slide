@@ -1,0 +1,709 @@
+Practical advice for Go library authors
+Writing better libraries
+14 Jul 2016
+
+Jack Lindamood
+Software Engineer, Twitch
+cep221@gmail.com
+
+* Goal of this talk
+
+Many ways to do common things
+
+Which way is preferred and why
+
+Common pitfalls of Go libraries
+
+What I wish I knew
+
+: Teaching you how to compose music, not play the piano
+
+* Naming things
+
+: There are only two hard things in Computer Science: cache invalidation and naming things.
+
+* General naming advice
+
+Generally imports are not renamed
+
+Standard practice is PACKAGE.FUNCTION()
+
+Think of package as part of the name
+
+	// In Java, the package name is silent
+	Java:  new BufferedReader()
+
+	// In Go, the package name is where it is used
+	Go:    bufio.NewReader()
+
+: The most important thing is thinking of the package as part of the name
+
+* Naming examples
+
+Tips for structs
+
+- stuttering struct names ok, but avoid if you can
+
+	// bad.  Too generic
+	var c client.Client
+
+	// stuttering, but accepted
+	var ctx context.Context
+
+	// optimal example
+	var h http.Client
+
+Tips for functions
+
+- package functions should never stutter
+
+	// Ok.  Reads as a background context
+	context.Background()
+
+	// Not ok.  Context redundant
+	context.NewContext()
+
+
+: Primary point is to think of the package name in the public member's name
+: Great blog post on naming: https://blog.golang.org/package-names
+
+* Object creation
+
+: Slide 6 of 38
+
+* Object construction
+
+No rigid constructor like other languages
+
+Zero value sometimes works
+
+Constructor function (NewXYZ) has ramifications
+
+Using the struct or constructor function
+
+	// Using the struct
+	x := http.Client{}
+
+	// Constructor function
+	y := bytes.NewBuffer(...)
+
+: Will spend next few slides talking about how to make your object
+
+* Zero value considerations
+
+	// Examples of a zero value
+	var c http.Client
+	y := bytes.Buffer{}
+
+: Zero value should make sense if people create it directly
+
+Read operations work well on nil map/slice/chan
+
+- Great for making your zero value behave
+
+Less useful if
+
+- struct needs background goroutines
+
+- non zero/empty defaults are the best
+
+Zero struct support is viral!!!!
+
+- So is nil support
+
+* Working with zero values 
+: Should really be called "Working around no constructor"
+
+Example for defaults
+
+	// net/http/server.go
+	func (srv *Server) ListenAndServe() error {
+		addr := srv.Addr
+		if addr == "" {
+			addr = ":http"
+		}
+		// ...
+	}
+
+Example for nil reads
+
+	// bytes/buffer.go
+	type Buffer struct {
+		buf []byte
+		off int
+	}
+
+	func (b *Buffer) Len() int { return len(b.buf) - b.off }
+
+: Talk about sync.Init trade-offs
+
+* New() constructor function
+Not as terse as making zero value work
+
+Constructors can do anything.  Struct initialization only does one thing.
+
+Risk people use struct w/o getting it from New
+
+Some libraries hide this with a private struct, public interface
+
+: Interfaces are for behavior not information hiding
+
+	// anti-pattern.go
+	type authImpl struct {
+	}
+
+	type Auth interface {
+		// Tends to be very large
+	}
+
+	func NewAuth() Auth {
+	}
+
+* What do these do?
+
+	func directUse() {
+		x := grpc.Client{
+			Port:     123,
+			Hostname: "elaine82.sjc",
+		}
+		// ...
+	}
+
+	func constructor() {
+		x := grpc.NewClient(123, "elaine82.sjc")
+		// ...
+	}
+
+Does constructor() do the following
+
+- spawn goroutines
+
+- allocate extra memory
+
+- panic
+
+: Answer.  YOU DON'T KNOW!
+
+: It's like C.  Being able to know what code does as quickly as possible
+
+* Singleton options
+- Go stdlib makes heavy use of singletons
+- not a fan of this
+: Only a sith deals in absolutes
+- Beware hidden singletons (expvar/http/rand/etc)
+: Talk about double import and expvar.Register resulting in panic
+- General way singletons are done
+
+: Singletons start off as easy, simple abstractions until they are not then they're really really terrible and difficult
+
+	var std = New(os.Stderr, "", LstdFlags)
+
+	// Singleton functions in package.  Same as struct functions
+	func Print(v ...interface{}) {
+		std.Print(v...)
+	}
+
+	func (l *Logger) Print(v ...interface{}) {
+		// ...
+	}
+
+* Configuration
+
+: Slide 13 of 38
+
+* Optional config w/ functions
+
+Use NewXYZ(WithThing(), WithThing()) can be clunky
+
+Has not gained adoption
+
+	type Server struct {
+		speed int
+	}
+
+	func Speed(rate int) func(*Server) {
+		return func(s *Server) {
+			s.speed = rate
+		}
+	}
+
+	func NewServer(options ...func(*Server)) {
+	}
+
+	x := NewServer(http.Speed(10))
+
+: Honestly difficult to use
+: http://dave.cheney.net/2014/10/17/functional-options-for-friendly-apis
+: https://commandcenter.blogspot.nl/2014/01/self-referential-functions-and-design.html
+
+* Config struct
+
+Gaining popularity
+
+Easy to understand all available options
+
+Does zero work for default config? Sometimes not
+
+Important to document if config is usable after being passed in
+
+Easier to work with config management
+
+	// Usually JSON in config management
+	type Config struct {
+		Speed int
+	}
+
+	func NewServer(conf *Config) {
+	}
+
+: Honestly also able to just put your config on your struct
+
+* Logging
+
+: Slide 16 of 38
+
+* Logging counter-example
+
+	import "log"
+
+	type Server struct {}
+
+	func (s *Server) handleRequest(r *Request) {
+		if r.user == 0 {
+			log.Println("No user set")
+			return
+		}
+		// ...
+	}
+
+- Direct print to std streams
+
+- There are many logging frameworks
+
+- Cannot turn it off
+
+* Logging advice
+
+Is it needed?
+
+: Push it up the stack
+: error return can remove most logging needs
+
+Logging is a callback
+
+: What does logging communicate?
+
+Log to an interface
+
+Don't assume log package
+
+Respect stdout/stderr
+
+: Worse thing is printing to STDOUT/STDERR
+
+No singleton!
+
+: Structured logging vs built in logging
+: Author is a big fan of structured logging
+
+* Better logging example
+
+	type Log interface {
+		Println(v ...interface{})
+	}
+	type Server struct {
+		Logger Log
+	}
+	func (s *Server) log(v ...interface{}) {
+		if s.Logger != nil {
+			s.Logger.Println(v...)
+		}
+	}
+	func (s *Server) handleRequest(r *Request) {
+		if r.user == 0 {
+			s.log("No user set")
+			return
+		}	
+	}
+
+Can we do even better?
+
+- Structured logging
+
+* Interfaces
+
+: Slide 20 of 38
+
+* interfaces vs structs
+
+Accept interfaces, return structs
+
+Some libraries only expose interfaces. Keep all structs private.
+
+- Tend to be large interfaces
+: Only exposing interfaces tend to get large
+
+Usually no need to include interface from outside your package/stdlib
+
+- Ok to do, just not needed
+- Prevents import cycles
+- Implicit interfaces get around this
+- context.Context made this difficult
+
+Means an API that uses standard objects is usually best
+
+- Easier to implement
+
+: If using standard params, easier for other people to pretend to be your struct
+
+* Let's make a random package
+
+	type Rand interface {
+		ExpFloat64() float64
+		Float32() float32
+		Float64() float64
+		Int() int
+		Int31() int32
+		Int31n(n int32) int32
+		Int63() int64
+		Int63n(n int64) int64
+		Intn(n int) int
+		NormFloat64() float64
+		Perm(n int) []int
+		Read(p []byte) (n int, err error)
+		Seed(seed int64)
+		Uint32() uint32
+	}
+
+There are lots of ways to generate random things
+
+What is wrong with this?
+
+* Avoiding large interfaces (rand.Rand)
+
+Lots of ways to get random things
+
+- rand.Rand{} would be a very large interface
+
+rand.Source is an interface.  Very small.  The building block.
+
+- Lesson: Turn large interfaces into small interfaces with wrapper logic
+
+	// A Source represents a source of uniformly-distributed
+	// pseudo-random int64 values in the range [0, 1<<63).
+	type Source interface {
+		Int63() int64
+		Seed(seed int64)
+	}
+
+	// A Rand is a source of random numbers.
+	type Rand struct {
+		src Source
+	}
+
+* Dealing with problems
+
+: Slide 24 of 38
+
+* When to panic
+
+Never?
+
+panic() in a spawned goroutine is the worst
+
+Panic is usually ok if:
+
+- Function begins with MustXYZ()
+- Operations on nil
+
+	// MustXYZ calls XYZ, panics on error.
+	// Note: Users still have the option to call XYZ directly
+	func MustCompile(str string) *Regexp {
+		regexp, error := Compile(str)
+		if error != nil {
+			panic(`...`)
+		}
+		return regexp
+	}
+
+: Really bad to let panics escape your library
+
+* Checking errors
+
+Check all errors on interface function calls
+
+- Especially the ones you don't expect to error!
+
+If you can't return it, always do something.
+
+- Log it
+- Increment something
+
+: We traded exceptions for nil: check them!
+
+: Wrapping errors can add context
+
+When are returning errors appropriate
+
+- When a promise could not be kept
+
+- When an answer could not be given
+
+	// Counterexample
+	HasPermission(userID) error
+
+	// Better
+	HasPermission(userID) (bool, error)
+
+
+* Enabling debuggability for your library
+
+Especially complex libraries can have state that isn't clear to the user
+
+Suggest exposing an expvar.Var{} as a function
+
+Debug logging can help
+
+Ideally expose Stat() function for atomic integers around tracking information
+	
+	type Stats struct {
+		// atomic.AddInt64(&s.stats.TotalRequests, 1)
+		TotalRequests int64
+	}
+	type Server struct {
+		DebugLog Log
+		stats    Stats
+	}
+	func (s *Server) Var() expvar.Var {
+		return expvar.Func(func() interface{} {
+			return struct{...}
+		}
+	}
+
+* Designing for testing
+
+Complex libraries could benefit users with a simple test helper
+
+- httptest is an example
+
+Abstract away time/IO/os calls with interfaces
+
+- Maintain control
+
+: Ask yourself, is there something you cannot control
+
+: If it's important to keep Scheduler trim, Now can be a package singleton.
+
+	// Package stub.  For trim structs
+	var Now = time.Now
+
+	// Inside struct for most control
+	type Scheduler struct {
+		Now func() time.Time
+	}
+
+	func (s *Scheduler) now() time.Time {
+		if s.Now != nil {
+			return s.Now()
+		}
+		return time.Now()
+	}
+
+* Concurrency
+
+: Slide 29 of 38
+
+* Channels
+
+Stdlib has very few channels in the public API
+
+Push what you would use channels for up the stack
+
+Channels are rarely parameters to functions
+
+Callbacks vs channels
+
+Mixing mutexes and channels can be dangerous
+
+: Dangerous to keep mutexes across function calls
+
+Honestly, channels rarely belong in a public API
+
+: Not never, just rarely
+
+: If you're trying to use them, you're trying too hard.  If you're trying not to use them, you're trying too hard.
+
+* When to spawn goroutines
+
+Some libraries use New() to spawn their goroutines.
+
+: Always clean up after yourself!
+
+- Not ideal: Stdlib uses .Serve() functions
+
+Close() should end all daemon threads
+
+: My rec: After a Close(), everything is GC-able and goroutines are stopped
+
+: Notice, channels and goroutines: Push it up the stack
+
+Push goroutine creation up the stack
+
+	// counterexample
+	func NewServer(..) *Server {
+		s := &Server{...}
+		go s.Start()
+		return s
+	}
+
+	// ideal
+	func userLand() {
+		// ...
+		s := http.Server{}
+		go s.Serve(l)
+		// ...
+	}
+
+* When to use context.Context and when not to
+
+All blocking/long operations should be cancelable!
+
+Generally an abuse to store context.Context
+
+When to use context.Value()
+
+- What other languages would use thread local for
+: But isn't thread local bad?  YES IT IS!
+
+- So easy to abuse
+
+- Try hard not to use it
+
+
+Singletons and context.Value() obscure your program's state machine
+
+- Context.Value() Should *inform* not *control*
+
+: Context should "flow" through your program
+
+Seriously though, try not to use context.Value()
+
+
+
+* If something is hard to do, make someone else do it
+
+: Concurrency and synchronization is hard.  So don't do it! The best thing you can do in life is make a hard problem someone else's problem?
+
+Great advice in library design, system design, and Dilbert life
+
+The less hard things you try to do, the less likely you'll screw up whatever you're doing.
+
+Hard things (threading/Mutexes/Deadlock/channels/encryption)
+
+Push problems up the stack
+
+- Logging
+
+- Goroutines
+
+- Locking
+
+: Give options, not opinions
+
+Corollary: Try not to do things
+
+* Designing for efficiency
+
+: Slide 34 of 38
+
+Correctness still trumps efficiency
+
+Minimizing memory allocs is usually first priority
+
+: - Encode into a buffer vs returning []byte
+
+: - Designing around WriteTo vs Write()
+
+: - Using len parameter on make()
+
+Avoid creating an API that forces memory allocations
+
+- Easy to optimize internals
+
+- Hard to change an API
+
+: If you write fast and buggy code then fix it, you're a liability.  If you write correct and slow code, then speed it up you're a 10x engineer that keeps on delivering.
+
+	func (s *Object) Encode() []byte {
+		// ....
+	}
+
+	func (s *Object) WriteTo(w io.Writer) {
+		// ...
+	}
+
+	
+* Using /vendor in libraries
+
+Package management is not ideal for go libraries
+
+: 100% blame "go get"
+
+: Package management: The o rings of the go rocket ship?
+
+Don't use /vendor for libraries.
+
+- Will have issues if the library has singletons
+: That's why I hate singletons BTW
+
+- Try to use implicit interfaces and injection
+
+Don't expose vendored deps as part of the library's external API
+
+- Their github.com/a isn't the same as your github.com/b/vendor/github.com/a
+
+: Ideally keep vendoring internal
+
+Honestly, just don't use libraries in your library
+
+- npm::left-pad
+
+: http://www.theregister.co.uk/2016/03/23/npm_left_pad_chaos/
+
+: I break this rule for testing
+
+: Testing helpers are awesome and useful and totally worth having in another library
+
+: Just like repeatably reliable builds are important for binaries, repeatably correct assertions are important for libraries.  This means you have control over your dependencies.
+
+* Build tags
+
+Cross OS libraries
+
+Writing libraries that are compatible with new versions of Go
+
+- Example: http.Request.Cancel channel
+
+- Use build tags like // +build go1.5
+
+Integration tests
+
+- Integration testing for libraries (with // +build integration)
+
+* Staying clean
+
+Numerous static analysis tools for go
+
+- Use almost all of them
+
+- Once experienced, you can lint/grep them away
+
+Build options (travis/circle/etc)
+
+- Many free continuous testing integrations for open source libraries
+
+- Helps ensure code works for various Go versions
+
+: gometalinter is pretty awesome
+
+: Follow my blog on Medium for more detailed posts https://medium.com/@cep21
