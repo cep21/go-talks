@@ -230,7 +230,7 @@ Has not gained adoption
 	func NewServer(options ...func(*Server)) {
 	}
 
-	x := NewServer(http.Speed(10))
+	x := NewServer(Speed(10))
 
 : Honestly difficult to use
 : http://dave.cheney.net/2014/10/17/functional-options-for-friendly-apis
